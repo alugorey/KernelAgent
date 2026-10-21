@@ -38,7 +38,7 @@ Usage::
     )
 
     # Register a new backend
-    registry.register("verifier", "rocm", RocmVerifier)
+    registry.register("verifier", "mybackend", MyVerifier)
 """
 
 from __future__ import annotations
@@ -197,7 +197,7 @@ registry = PlatformRegistry()
 
 
 def _register_builtins() -> None:
-    """Register the built-in nvidia and noop implementations."""
+    """Register the built-in nvidia, rocm and noop implementations."""
 
     from triton_kernel_agent.platform.nvidia import (
         NvidiaAcceleratorSpecsProvider,
@@ -250,6 +250,32 @@ def _register_builtins() -> None:
     }
     for component, factory in _noop.items():
         registry.register(component, "noop", factory)
+
+    from triton_kernel_agent.platform.rocm import (
+        RocmAcceleratorSpecsProvider,
+        RocmBenchmarker,
+        RocmBottleneckAnalyzer,
+        RocmKernelProfiler,
+        RocmRAGPrescriber,
+        RocmRooflineAnalyzer,
+        RocmVerifier,
+        RocmWorkerRunner,
+    )
+
+    _rocm = {
+        # Manager-level
+        "verifier": RocmVerifier,
+        "benchmarker": RocmBenchmarker,
+        "worker_runner": RocmWorkerRunner,
+        # Worker-level
+        "specs_provider": RocmAcceleratorSpecsProvider,
+        "profiler": RocmKernelProfiler,
+        "roofline_analyzer": RocmRooflineAnalyzer,
+        "bottleneck_analyzer": RocmBottleneckAnalyzer,
+        "rag_prescriber": RocmRAGPrescriber,
+    }
+    for component, factory in _rocm.items():
+        registry.register(component, "rocm", factory)
 
 
 _register_builtins()

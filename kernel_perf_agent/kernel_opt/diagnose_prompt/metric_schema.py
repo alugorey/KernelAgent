@@ -44,6 +44,9 @@ GPU_SPEC_FIELDS: List[MetricDef] = [
     ("Max Threads per SM", "max_threads_per_sm", ""),
     ("L1 Cache per SM", "l1_cache_kb", " KB"),
     ("L2 Cache (Total)", "l2_cache_mb", " MB"),
+    # Only present for AMD specs; omitted from prompts when absent.
+    ("Wavefront Size", "wavefront_size", " threads"),
+    ("LDS per CU", "lds_kb", " KB"),
 ]
 
 # Special case: Memory Size has two fields combined
@@ -147,5 +150,71 @@ NCU_METRIC_SECTIONS: Dict[str, List[MetricDef]] = {
             "smsp__warp_issue_stalled_branch_resolving_per_warp_active.pct",
             "%",
         ),
+    ],
+}
+
+# =============================================================================
+# rocprofv3 (AMD) Profiling Metric Sections
+#
+# Keys are the derived metrics produced by
+# kernel_perf_agent/kernel_opt/profiler/rocprof_profiler.py from raw
+# rocprofv3 hardware counters (see ROCPROF_COUNTER_PASSES there).
+# =============================================================================
+
+# Speed-of-light keys consumed by the AMD roofline analyzer.
+ROCPROF_COMPUTE_SOL_KEY = "compute_sol_pct"
+ROCPROF_MEMORY_SOL_KEY = "memory_sol_pct"
+ROCPROF_MATRIX_UTIL_KEY = "mfma_util_pct"
+
+ROCPROF_METRIC_SECTIONS: Dict[str, List[MetricDef]] = {
+    "Speed of Light": [
+        ("Kernel Duration (under counter collection)", "duration_us", " us"),
+        ("Compute SOL (max of VALU busy, matrix-core util)", "compute_sol_pct", "%"),
+        ("Memory SOL (HBM bandwidth % of peak)", "memory_sol_pct", "%"),
+    ],
+    "Compute Utilization": [
+        ("VALU Busy", "valu_busy_pct", "%"),
+        ("Matrix Core (MFMA/WMMA) Utilization", "mfma_util_pct", "%"),
+        ("SALU Busy", "salu_busy_pct", "%"),
+        ("Total Wavefronts", "total_waves", ""),
+        ("VALU Instructions", "valu_insts", ""),
+        ("SALU Instructions", "salu_insts", ""),
+        ("Matrix (MFMA) Instructions", "mfma_insts", ""),
+        ("Branch Instructions", "branch_insts", ""),
+    ],
+    "Memory Bandwidth & Cache": [
+        ("HBM Bandwidth", "hbm_bandwidth_gbps", " GB/s"),
+        ("HBM Bandwidth % of Peak", "hbm_bw_pct_of_peak", "%"),
+        ("HBM Bytes Read", "hbm_read_bytes", " bytes"),
+        ("HBM Bytes Written", "hbm_write_bytes", " bytes"),
+        ("vL1D (L1) Hit Rate", "l1_hit_rate_pct", "%"),
+        ("L2 Hit Rate", "l2_hit_rate_pct", "%"),
+        (
+            "L2 Busy (cycles with requests in flight; not throughput)",
+            "l2_busy_pct",
+            "%",
+        ),
+        ("Vector Memory Read Instructions", "vmem_read_insts", ""),
+        ("Vector Memory Write Instructions", "vmem_write_insts", ""),
+        ("LDS Instructions", "lds_insts", ""),
+    ],
+    "Occupancy & Resources": [
+        ("Wavefront Size", "wavefront_size", " threads"),
+        ("Occupancy (% of max wavefronts)", "occupancy_pct", "%"),
+        ("Mean Wavefronts per Active CU", "waves_per_cu", ""),
+        ("Workgroup Size", "workgroup_size", " threads"),
+        ("Wavefronts per Workgroup", "waves_per_workgroup", ""),
+        ("Grid Size", "grid_size", " threads"),
+        ("VGPRs per Lane", "vgpr_count", ""),
+        ("AGPRs (Accumulation VGPRs) per Lane", "agpr_count", ""),
+        ("SGPRs per Wavefront", "sgpr_count", ""),
+        ("LDS per Workgroup", "lds_bytes_per_workgroup", " bytes"),
+        ("Scratch (Register Spill) per Lane", "scratch_bytes_per_lane", " bytes"),
+    ],
+    "Stalls": [
+        ("Dependency Wait (any instruction)", "dependency_wait_pct", "%"),
+        ("LDS Wait", "lds_wait_pct", "%"),
+        ("Memory Unit Stalled", "mem_unit_stalled_pct", "%"),
+        ("LDS Bank Conflict", "lds_bank_conflict_pct", "%"),
     ],
 }

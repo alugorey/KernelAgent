@@ -81,7 +81,16 @@ class RooflineResult:
 
 
 class RooflineAnalyzer:
-    """Analyzes kernel performance using NCU SOL metrics."""
+    """Analyzes kernel performance using NCU SOL metrics.
+
+    The metric keys are class attributes so other profilers (e.g. rocprofv3,
+    see ``rocprof_roofline.py``) can reuse the analysis by overriding them.
+    """
+
+    COMPUTE_SOL_KEY = "sm__throughput.avg.pct_of_peak_sustained_elapsed"
+    MEMORY_SOL_KEY = "gpu__compute_memory_throughput.avg.pct_of_peak_sustained_elapsed"
+    TENSOR_UTIL_KEY = "sm__pipe_tensor_cycles_active.avg.pct_of_peak_sustained_active"
+    PROFILER_NAME = "NCU"
 
     def __init__(
         self,
@@ -101,9 +110,7 @@ class RooflineAnalyzer:
 
     def _is_using_tensor_cores(self, ncu_metrics: dict[str, Any]) -> bool:
         """Detect tensor core usage from NCU metrics."""
-        tc_cycles = ncu_metrics.get(
-            "sm__pipe_tensor_cycles_active.avg.pct_of_peak_sustained_active", 0
-        )
+        tc_cycles = ncu_metrics.get(self.TENSOR_UTIL_KEY, 0) or 0
         return tc_cycles > self.config.tensor_core_threshold
 
     def _classify_bottleneck(self, compute_sol: float, memory_sol: float) -> str:
@@ -141,17 +148,21 @@ class RooflineAnalyzer:
         warnings: list[str] = []
 
         # Extract SOL metrics with missing-key detection
-        compute_key = "sm__throughput.avg.pct_of_peak_sustained_elapsed"
-        memory_key = "gpu__compute_memory_throughput.avg.pct_of_peak_sustained_elapsed"
+        compute_key = self.COMPUTE_SOL_KEY
+        memory_key = self.MEMORY_SOL_KEY
 
         compute_missing = compute_key not in ncu_metrics
         memory_missing = memory_key not in ncu_metrics
 
         if compute_missing:
-            self.logger.warning("Compute SOL metric missing from NCU data")
+            self.logger.warning(
+                f"Compute SOL metric missing from {self.PROFILER_NAME} data"
+            )
             warnings.append("Compute SOL metric missing")
         if memory_missing:
-            self.logger.warning("Memory SOL metric missing from NCU data")
+            self.logger.warning(
+                f"Memory SOL metric missing from {self.PROFILER_NAME} data"
+            )
             warnings.append("Memory SOL metric missing")
 
         # Fail only if both keys are absent
@@ -164,11 +175,13 @@ class RooflineAnalyzer:
                 headroom_pct=100,
                 bottleneck="unknown",
                 uses_tensor_cores=False,
-                warnings=["Analysis failed - no SOL metrics in NCU data"],
+                warnings=[
+                    f"Analysis failed - no SOL metrics in {self.PROFILER_NAME} data"
+                ],
             )
 
-        compute_sol = ncu_metrics.get(compute_key, 0)
-        memory_sol = ncu_metrics.get(memory_key, 0)
+        compute_sol = ncu_metrics.get(compute_key) or 0
+        memory_sol = ncu_metrics.get(memory_key) or 0
 
         # Primary efficiency: use max of compute/memory
         efficiency = max(compute_sol, memory_sol)

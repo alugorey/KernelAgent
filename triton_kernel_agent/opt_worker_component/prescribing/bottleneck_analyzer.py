@@ -55,6 +55,8 @@ class BottleneckAnalyzer:
         num_causes: int = 2,
         num_fixes: int = 1,
         enable_debug: bool = True,
+        roofline: RooflineAnalyzer | None = None,
+        prompt_options: dict[str, Any] | None = None,
     ):
         """
         Initialize bottleneck analyzer.
@@ -69,6 +71,10 @@ class BottleneckAnalyzer:
             num_causes: Number of root causes per bottleneck
             num_fixes: Number of recommended fixes per bottleneck
             enable_debug: Whether to save debug files (prompts/responses)
+            roofline: Roofline analyzer (default: NCU-keyed RooflineAnalyzer)
+            prompt_options: Extra kwargs for build_bottleneck_prompt
+                (profiler_name, metric_sections, matrix_unit_name,
+                hardware_notes) for non-NCU profilers
         """
         self.provider = provider
         self.model = model
@@ -79,7 +85,8 @@ class BottleneckAnalyzer:
         self.num_causes = num_causes
         self.num_fixes = num_fixes
         self.enable_debug = enable_debug
-        self.roofline = RooflineAnalyzer(logger=logger)
+        self.roofline = roofline or RooflineAnalyzer(logger=logger)
+        self.prompt_options = prompt_options or {}
 
     def analyze(
         self,
@@ -126,6 +133,7 @@ class BottleneckAnalyzer:
             num_bottlenecks=self.num_bottlenecks,
             num_causes=self.num_causes,
             num_fixes=self.num_fixes,
+            **self.prompt_options,
         )
 
         response = _call_llm(

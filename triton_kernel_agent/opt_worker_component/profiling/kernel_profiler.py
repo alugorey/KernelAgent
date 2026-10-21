@@ -50,7 +50,8 @@ class ProfilerMetadata:
     problem_file: str
     round_num: int
     timestamp: str
-    ncu_version: str | None
+    ncu_version: str | None  # profiler version (NCU or otherwise; see profiler_name)
+    profiler_name: str = "ncu"
 
 
 @dataclass
@@ -79,6 +80,17 @@ class ProfilerResults:
 
 
 class KernelProfiler:
+    """NCU-based kernel profiler.
+
+    Subclasses for other profilers override :meth:`_collect_once`,
+    :attr:`profiler_version` and the ``PROFILER_*`` class attributes; the
+    semaphore, retry and result-saving logic is shared.
+    """
+
+    PROFILER_LABEL = "NCU"
+    PROFILER_NAME = "ncu"
+    METRICS_FILE_SUFFIX = "ncu_metrics"
+
     def __init__(
         self,
         logger: logging.Logger,
@@ -136,6 +148,11 @@ class KernelProfiler:
         except Exception as e:
             self.logger.debug(f"Failed to get NCU version: {e}")
             return None
+
+    @property
+    def profiler_version(self) -> str | None:
+        """Version string of the underlying profiler (recorded in metadata)."""
+        return self.ncu_version
 
     def _wait_with_backoff(self, attempt: int) -> None:
         """
@@ -222,46 +239,24 @@ class KernelProfiler:
         max_retries: int,
     ) -> ProfilerResults | None:
         """Internal implementation of profile_kernel (called with semaphore held)."""
+        label = self.PROFILER_LABEL
 
         for attempt in range(1, max_retries + 1):
             try:
                 self.logger.info(
-                    f"[Round {round_num}] NCU profiling attempt {attempt}/{max_retries}..."
+                    f"[Round {round_num}] {label} profiling attempt {attempt}/{max_retries}..."
                 )
 
-                # Profile with NCU
-                csv_file = f"ncu_round_{round_num}.csv"
-                csv_path = profile_triton_kernel(
-                    benchmark_script=wrapper_file,
-                    workdir=self.artifacts_dir,
-                    out_csv=csv_file,
-                    ncu_bin=self.ncu_bin_path,
-                    launch_skip=3,  # Skip warmup iterations, capture final run
-                    launch_count=20,
-                    timeout=self.ncu_timeout_seconds,
-                )
-
-                # Load and parse metrics
-                metrics_df = load_ncu_metrics(csv_path, select="last")
-                metrics = json.loads(metrics_to_prompt(metrics_df))
-
-                # Build ProfilerResults
-                results = ProfilerResults(
-                    metrics_df=metrics_df,
-                    metrics=metrics,
-                    metadata=ProfilerMetadata(
-                        kernel_file=str(kernel_file),
-                        problem_file=str(problem_file),
-                        round_num=round_num,
-                        timestamp=datetime.utcnow().isoformat() + "Z",
-                        ncu_version=self.ncu_version,
-                    ),
+                results = self._collect_once(
+                    wrapper_file, kernel_file, problem_file, round_num
                 )
 
                 # Save metrics with metadata
                 self._save_profiler_results(results)
 
-                self.logger.info(f"✅ NCU profiling completed for round {round_num}")
+                self.logger.info(
+                    f"✅ {label} profiling completed for round {round_num}"
+                )
                 return results
 
             except FileNotFoundError as e:
@@ -272,13 +267,13 @@ class KernelProfiler:
                 is_final_attempt = attempt >= max_retries
                 if is_final_attempt:
                     self.logger.error(
-                        f"❌ NCU profiling timed out after {self.ncu_timeout_seconds}s "
+                        f"❌ {label} profiling timed out after {self.ncu_timeout_seconds}s "
                         f"(final attempt {attempt}/{max_retries})"
                     )
                     return None
                 else:
                     self.logger.debug(
-                        f"NCU profiling timed out after {self.ncu_timeout_seconds}s "
+                        f"{label} profiling timed out after {self.ncu_timeout_seconds}s "
                         f"(attempt {attempt}/{max_retries})"
                     )
                     self._wait_with_backoff(attempt)
@@ -288,12 +283,12 @@ class KernelProfiler:
                 is_final_attempt = attempt >= max_retries
                 if is_final_attempt:
                     self.logger.error(
-                        f"❌ Failed to parse NCU metrics (final attempt): {e}"
+                        f"❌ Failed to parse {label} metrics (final attempt): {e}"
                     )
                     return None
                 else:
                     self.logger.debug(
-                        f"Failed to parse NCU metrics (attempt {attempt}/{max_retries}): {e}"
+                        f"Failed to parse {label} metrics (attempt {attempt}/{max_retries}): {e}"
                     )
                     self._wait_with_backoff(attempt)
                     continue
@@ -315,9 +310,55 @@ class KernelProfiler:
 
         # All retries exhausted
         self.logger.error(
-            f"❌ NCU profiling failed after {max_retries} attempts for round {round_num}"
+            f"❌ {label} profiling failed after {max_retries} attempts for round {round_num}"
         )
         return None
+
+    def _make_results(
+        self,
+        metrics_df: pd.DataFrame,
+        metrics: Dict[str, Any],
+        kernel_file: Path,
+        problem_file: Path,
+        round_num: int,
+    ) -> ProfilerResults:
+        return ProfilerResults(
+            metrics_df=metrics_df,
+            metrics=metrics,
+            metadata=ProfilerMetadata(
+                kernel_file=str(kernel_file),
+                problem_file=str(problem_file),
+                round_num=round_num,
+                timestamp=datetime.utcnow().isoformat() + "Z",
+                ncu_version=self.profiler_version,
+                profiler_name=self.PROFILER_NAME,
+            ),
+        )
+
+    def _collect_once(
+        self,
+        wrapper_file: Path,
+        kernel_file: Path,
+        problem_file: Path,
+        round_num: int,
+    ) -> ProfilerResults:
+        """Run NCU once and parse its metrics (no retries; may raise)."""
+        csv_file = f"ncu_round_{round_num}.csv"
+        csv_path = profile_triton_kernel(
+            benchmark_script=wrapper_file,
+            workdir=self.artifacts_dir,
+            out_csv=csv_file,
+            ncu_bin=self.ncu_bin_path,
+            launch_skip=3,  # Skip warmup iterations, capture final run
+            launch_count=20,
+            timeout=self.ncu_timeout_seconds,
+        )
+
+        metrics_df = load_ncu_metrics(csv_path, select="last")
+        metrics = json.loads(metrics_to_prompt(metrics_df))
+        return self._make_results(
+            metrics_df, metrics, kernel_file, problem_file, round_num
+        )
 
     def _save_profiler_results(self, results: ProfilerResults) -> None:
         """
@@ -327,7 +368,8 @@ class KernelProfiler:
             results: ProfilerResults to save
         """
         metrics_file = (
-            self.logs_dir / f"round{results.metadata.round_num:03d}_ncu_metrics.json"
+            self.logs_dir
+            / f"round{results.metadata.round_num:03d}_{self.METRICS_FILE_SUFFIX}.json"
         )
 
         with open(metrics_file, "w") as f:

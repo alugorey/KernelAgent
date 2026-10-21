@@ -69,24 +69,28 @@ def _detect_gpus() -> list[int]:
     if the manager has already touched ``torch.cuda`` the children inherit
     that locked-in device list and ignore any post-fork
     ``CUDA_VISIBLE_DEVICES`` override.  We use ``nvidia-smi`` subprocess
-    detection instead.
+    detection (and, on AMD, the KFD sysfs topology) instead.
 
     Order of resolution:
-      1. ``CUDA_VISIBLE_DEVICES`` env (respect user restriction).
-      2. ``nvidia-smi --query-gpu=index --format=csv,noheader``.
-      3. Fallback to ``[0]`` (single GPU).
+      1. ``HIP_VISIBLE_DEVICES`` env (AMD; takes precedence over
+         ``CUDA_VISIBLE_DEVICES`` in the HIP runtime).
+      2. ``CUDA_VISIBLE_DEVICES`` env (respect user restriction).
+      3. ``nvidia-smi --query-gpu=index --format=csv,noheader``.
+      4. AMD GPUs listed in ``/sys/class/kfd/kfd/topology`` (no HIP init).
+      5. Fallback to ``[0]`` (single GPU).
     """
     import os
     import subprocess
 
-    cvd = os.environ.get("CUDA_VISIBLE_DEVICES")
-    if cvd:
-        try:
-            ids = [int(x.strip()) for x in cvd.split(",") if x.strip()]
-            if ids:
-                return ids
-        except ValueError:
-            pass
+    for var in ("HIP_VISIBLE_DEVICES", "CUDA_VISIBLE_DEVICES"):
+        visible = os.environ.get(var)
+        if visible:
+            try:
+                ids = [int(x.strip()) for x in visible.split(",") if x.strip()]
+                if ids:
+                    return ids
+            except ValueError:
+                pass
     try:
         out = subprocess.run(
             ["nvidia-smi", "--query-gpu=index", "--format=csv,noheader"],
@@ -98,6 +102,14 @@ def _detect_gpus() -> list[int]:
             ids = [int(x.strip()) for x in out.stdout.splitlines() if x.strip()]
             if ids:
                 return ids
+    except Exception:
+        pass
+    try:
+        from triton_kernel_agent.platform.amd_topology import list_gpu_nodes
+
+        amd_gpus = list_gpu_nodes()
+        if amd_gpus:
+            return list(range(len(amd_gpus)))
     except Exception:
         pass
     return [0]

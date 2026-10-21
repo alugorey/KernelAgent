@@ -28,6 +28,9 @@ Caveats:
 - A kernel module may define multiple ``@triton.jit`` functions.  This
   module hashes the sorted concatenation of all normalized PTX strings
   under the cache dir, so the fingerprint reflects the whole module.
+- On AMD (ROCm) Triton emits no PTX; the cache holds ``*.amdgcn`` assembly
+  instead, which is hashed after :func:`normalize_amdgcn`.  AMDGCN uses
+  physical register names, so only debug info and comments need stripping.
 """
 
 from __future__ import annotations
@@ -128,11 +131,49 @@ def normalize_ptx(ptx: str) -> str:
     return body
 
 
+# AMDGCN: ``;`` comments, plus debug-line directives that encode source
+# file paths and line numbers.
+_RE_AMDGCN_COMMENT = re.compile(r";[^\n]*")
+_AMDGCN_DROP_PREFIXES = (".loc", ".file", ".ident")
+_RE_AMDGCN_SECTION = re.compile(r"^\.section\s+(\S+?)(?:,|\s|$)")
+
+
+def normalize_amdgcn(asm: str) -> str:
+    """Return a canonical form of AMDGCN assembly suitable for hashing.
+
+    Stripped: ``;`` comments, ``.loc``/``.file``/``.ident`` directives, and
+    every ``.debug_*`` section (DWARF, which embeds paths/line numbers).
+    Normalized: whitespace.
+    """
+    kept_lines: list[str] = []
+    in_debug_section = False
+    for raw in asm.splitlines():
+        stripped = _RE_AMDGCN_COMMENT.sub("", raw).strip()
+        if not stripped:
+            continue
+        section = _RE_AMDGCN_SECTION.match(stripped)
+        if section:
+            in_debug_section = section.group(1).startswith(".debug")
+            if in_debug_section:
+                continue
+        elif stripped in (".text", ".data", ".bss"):
+            in_debug_section = False
+        if in_debug_section:
+            continue
+        if any(stripped.startswith(p) for p in _AMDGCN_DROP_PREFIXES):
+            continue
+        kept_lines.append(_RE_WS.sub(" ", stripped))
+    return "\n".join(kept_lines)
+
+
 def _find_ptx_files(cache_dir: Path) -> list[Path]:
-    """Return every ``*.ptx`` file under *cache_dir* (recursive)."""
+    """Return every ``*.ptx`` file under *cache_dir* (recursive).
+
+    Falls back to ``*.amdgcn`` (AMD/ROCm Triton output) when there is no PTX.
+    """
     if not cache_dir.exists():
         return []
-    return sorted(cache_dir.rglob("*.ptx"))
+    return sorted(cache_dir.rglob("*.ptx")) or sorted(cache_dir.rglob("*.amdgcn"))
 
 
 def ptx_hash_from_cache(cache_dir: Path) -> str | None:
@@ -154,8 +195,9 @@ def ptx_hash_from_cache(cache_dir: Path) -> str | None:
     # filesystem iteration order.
     rel_sorted = sorted((p.relative_to(cache_dir).as_posix(), p) for p in ptx_files)
     for rel, path in rel_sorted:
+        normalize = normalize_amdgcn if path.suffix == ".amdgcn" else normalize_ptx
         try:
-            normalized = normalize_ptx(path.read_text(errors="replace"))
+            normalized = normalize(path.read_text(errors="replace"))
         except OSError:
             continue
         # Include the relative filename in the hash so two kernels with the

@@ -75,14 +75,14 @@ BOTTLENECK_PROMPT = """\
 You are a GPU performance expert analyzing Triton kernel profiling data.
 
 ## Task
-Analyze the NCU metrics and identify {num_bottlenecks} performance bottleneck(s). For each, classify as:
+Analyze the {profiler_name} metrics and identify {num_bottlenecks} performance bottleneck(s). For each, classify as:
 - **memory**: Memory bandwidth is the limiting factor
 - **compute**: Compute throughput is the limiting factor
 - **underutilized**: Neither saturated (<60% both), indicating stalls/occupancy issues
 
 ## GPU Specifications
 {gpu_specs}
-
+{hardware_notes}
 ## Roofline Analysis
 - Bottleneck: {roofline_bottleneck}
 - Compute SOL: {compute_sol:.1f}%
@@ -90,10 +90,10 @@ Analyze the NCU metrics and identify {num_bottlenecks} performance bottleneck(s)
 - Efficiency: {efficiency:.1f}%
 - Headroom: {headroom:.1f}%
 - At Roofline: {at_roofline}
-- Tensor Cores: {uses_tc}
+- {matrix_unit_name}: {uses_tc}
 - Warnings: {roofline_warnings}
 
-## NCU Metrics
+## {profiler_name} Metrics
 {ncu_metrics}
 
 ## Kernel Code
@@ -144,10 +144,14 @@ def _fmt_value(v: Any) -> str:
 def _format_gpu_specs(gpu_specs: dict[str, Any]) -> str:
     """Format GPU specifications using metric_schema definitions."""
     lines = []
+    # AMD specs store the Compute Unit count under sm_count.
+    is_amd = gpu_specs.get("vendor") == "AMD"
 
     for label, key, unit in GPU_SPEC_FIELDS:
         value = gpu_specs.get(key)
         if value is not None:
+            if is_amd:
+                label = label.replace("SM", "CU")
             lines.append(f"- {label}: {_fmt_value(value)}{unit}")
 
     for label, size_key, type_key, unit in GPU_MEMORY_FIELDS:
@@ -160,11 +164,15 @@ def _format_gpu_specs(gpu_specs: dict[str, Any]) -> str:
     return "\n".join(lines) if lines else "N/A"
 
 
-def _format_ncu_metrics(ncu_metrics: dict[str, Any]) -> str:
-    """Format NCU metrics grouped by section using metric_schema definitions."""
+def _format_ncu_metrics(
+    ncu_metrics: dict[str, Any],
+    metric_sections: dict[str, list[tuple[str, str, str]]] | None = None,
+) -> str:
+    """Format profiler metrics grouped by section using metric_schema definitions."""
     lines = []
+    sections = NCU_METRIC_SECTIONS if metric_sections is None else metric_sections
 
-    for section_name, metric_defs in NCU_METRIC_SECTIONS.items():
+    for section_name, metric_defs in sections.items():
         section_lines = []
         for label, key, unit in metric_defs:
             value = ncu_metrics.get(key)
@@ -175,7 +183,7 @@ def _format_ncu_metrics(ncu_metrics: dict[str, Any]) -> str:
             lines.append(f"### {section_name}")
             lines.extend(section_lines)
 
-    schema_keys = {key for _, key, _ in sum(NCU_METRIC_SECTIONS.values(), [])}
+    schema_keys = {key for _, key, _ in sum(sections.values(), [])}
     other_keys = sorted(set(ncu_metrics.keys()) - schema_keys)
     if other_keys:
         lines.append("### Other Metrics")
@@ -194,6 +202,10 @@ def build_bottleneck_prompt(
     num_bottlenecks: int = 1,
     num_causes: int = 2,
     num_fixes: int = 1,
+    profiler_name: str = "NCU",
+    metric_sections: dict[str, list[tuple[str, str, str]]] | None = None,
+    matrix_unit_name: str = "Tensor Cores",
+    hardware_notes: str = "",
 ) -> str:
     """Build the bottleneck analysis prompt for the LLM.
 
@@ -205,6 +217,10 @@ def build_bottleneck_prompt(
         num_bottlenecks: Number of bottlenecks to request.
         num_causes: Number of root causes per bottleneck.
         num_fixes: Number of recommended fixes per root cause.
+        profiler_name: Profiler shown in the prompt ("NCU", "rocprofv3", ...).
+        metric_sections: Metric display schema (default: NCU_METRIC_SECTIONS).
+        matrix_unit_name: Label for the roofline matrix-unit flag.
+        hardware_notes: Optional extra hardware context (e.g. wavefront size).
 
     Returns:
         Formatted prompt string for the LLM.
@@ -222,8 +238,11 @@ def build_bottleneck_prompt(
         at_roofline="Yes" if roofline.at_roofline else "No",
         uses_tc="Yes" if roofline.uses_tensor_cores else "No",
         roofline_warnings="; ".join(roofline.warnings) or "None",
-        ncu_metrics=_format_ncu_metrics(ncu_metrics),
+        ncu_metrics=_format_ncu_metrics(ncu_metrics, metric_sections),
         kernel_code=kernel_code,
+        profiler_name=profiler_name,
+        matrix_unit_name=matrix_unit_name,
+        hardware_notes=f"\n{hardware_notes.strip()}\n" if hardware_notes else "",
     )
 
 

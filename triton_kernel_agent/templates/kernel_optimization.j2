@@ -24,11 +24,21 @@ TASK: Optimize the following Triton kernel based on hardware profiling analysis 
 - Peak FP32: {{ gpu_specs.peak_fp32_tflops }} TFLOPS
 - Peak FP16: {{ gpu_specs.peak_fp16_tflops }} TFLOPS
 - Peak BF16: {{ gpu_specs.peak_bf16_tflops }} TFLOPS
-- SM Count: {{ gpu_specs.sm_count }}
-- Max Threads per SM: {{ gpu_specs.max_threads_per_sm }}
-- L1 Cache per SM: {{ gpu_specs.l1_cache_kb }} KB
+{%- set unit = "CU" if gpu_specs.vendor == "AMD" else "SM" %}
+- {{ unit }} Count: {{ gpu_specs.sm_count }}
+- Max Threads per {{ unit }}: {{ gpu_specs.max_threads_per_sm }}
+- L1 Cache per {{ unit }}: {{ gpu_specs.l1_cache_kb }} KB
 - L2 Cache: {{ gpu_specs.l2_cache_mb }} MB
 - Memory: {{ gpu_specs.memory_gb }} GB {{ gpu_specs.memory_type }}
+{%- if gpu_specs.wavefront_size %}
+- Wavefront Size: {{ gpu_specs.wavefront_size }} (Triton num_warps counts wavefronts)
+{%- endif %}
+{%- if gpu_specs.lds_kb %}
+- LDS (shared memory) per CU: {{ gpu_specs.lds_kb }} KB
+{%- endif %}
+{% endif %}
+{% if kernel_guidance %}
+{{ kernel_guidance }}
 {% endif %}
 
 ## PROBLEM DESCRIPTION
@@ -49,7 +59,7 @@ PyTorch Eager baseline: {{ "%.4f"|format(pytorch_baseline_ms) }} ms
 - Memory SOL: {{ "%.1f"|format(roofline.memory_sol_pct) }}%
 - Efficiency: {{ "%.1f"|format(roofline.efficiency_pct) }}% (headroom: {{ "%.1f"|format(roofline.headroom_pct) }}%)
 - At Roofline: {{ "Yes" if roofline.at_roofline else "No" }}
-- Tensor Cores: {{ "Active" if roofline.uses_tensor_cores else "Inactive" }}
+- {{ "Matrix Cores (MFMA/WMMA)" if gpu_specs and gpu_specs.vendor == "AMD" else "Tensor Cores" }}: {{ "Active" if roofline.uses_tensor_cores else "Inactive" }}
 {%- if roofline.warnings %}
 - Warnings: {{ roofline.warnings | join("; ") }}
 {%- endif %}

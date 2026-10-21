@@ -31,6 +31,7 @@ Every stage writes artifacts to a run directory under `.optimize/<run_id>/`, inc
 - **GPU Requirements (one of the following):**
   - **CUDA**: NVIDIA GPU with CUDA support
   - **XPU**: Intel GPU with oneAPI support (Arc, Data Center GPUs, or integrated Xe graphics)
+  - **ROCm** (prototype): AMD GPU with ROCm PyTorch + Triton; rocprofv3 for optimization
 - Triton (installed separately: `pip install triton` or nightly from source)
 - PyTorch (https://pytorch.org/get-started/locally/)
 - LLM provider ([OpenAI](https://openai.com/api/), [Anthropic](https://www.anthropic.com/), or a self-hosted relay)
@@ -226,6 +227,7 @@ KernelAgent supports multiple GPU platforms for Triton kernel execution:
 |----------|---------------|------|--------|
 | NVIDIA CUDA | `cuda` | `--target-platform cuda` (default) | Fully supported |
 | Intel XPU | `xpu` | `--target-platform xpu` | Supported |
+| AMD ROCm | `cuda` | `--target-platform rocm` | Prototype |
 
 ### Intel XPU Notes
 
@@ -234,6 +236,26 @@ When targeting Intel XPU, KernelAgent automatically:
 - Applies XPU-specific Triton optimizations (subgroup sizes, block sizes)
 - Generates appropriate device availability checks
 - Removes CUDA-specific patterns from generated code
+
+### AMD ROCm Notes (prototype)
+
+`--target-platform rocm` adds AMD-specific generation guidance. The ROCm
+optimization pipeline (`platform: rocm`, see `examples/configs/rocm.yaml`)
+replaces the NVIDIA components:
+- **Profiling**: rocprofv3 hardware counters, collected in several passes,
+  are turned into SOL, HBM bandwidth, cache hit rate, occupancy and stall
+  metrics for roofline and bottleneck analysis.
+- **Wavefront size**: 64 on CDNA/Instinct (MI2xx/MI3xx), 32 on RDNA/gfx12.
+  It is detected from `/sys/class/kfd` without initializing HIP, and can be
+  overridden with `KERNELAGENT_WAVEFRONT_SIZE=32|64`.
+- **GPU specs**: MI250X, MI300X/A, MI325X, MI350X, MI355X, RX 7900 XTX and
+  PRO W7900 are in the specs database; other AMD GPUs fall back to specs
+  read from sysfs.
+- **Multi-GPU**: workers are pinned with `HIP_VISIBLE_DEVICES`.
+- Kernel dedup fingerprints the AMDGCN assembly in the Triton cache
+  (there is no PTX on AMD).
+
+The ROCm PyTorch device string is still `cuda`.
 
 ### Verifying Platform Setup
 ```python

@@ -211,6 +211,10 @@ class NvidiaWorkerRunner(WorkerRunner):
             dict(gpu_locks) if gpu_locks else {0: benchmark_lock}
         )
 
+    def _get_worker_target(self):
+        """Module-level (picklable) function each worker process runs."""
+        return _nvidia_worker_process
+
     def run_workers(
         self,
         candidates: list[dict[str, Any]],
@@ -262,7 +266,7 @@ class NvidiaWorkerRunner(WorkerRunner):
                 gpu_id,
             )
 
-            p = mp.Process(target=_nvidia_worker_process, args=args)
+            p = mp.Process(target=self._get_worker_target(), args=args)
             p.start()
             workers.append(p)
 

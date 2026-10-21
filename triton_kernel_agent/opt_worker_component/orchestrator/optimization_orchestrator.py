@@ -1254,14 +1254,16 @@ class OptimizationOrchestrator:
             perf_metrics["bottleneck_addressed"] = bottleneck_category
             perf_metrics["bottleneck_category"] = bottleneck_category
 
-        # Add NCU metrics if available
+        # Add profiler metrics if available (NCU keys, else rocprofv3 keys)
         if ncu_metrics:
             kernel_metrics = next(iter(ncu_metrics.values()), {})
             perf_metrics["memory_throughput"] = kernel_metrics.get(
-                "dram__throughput.avg.pct_of_peak_sustained_elapsed"
+                "dram__throughput.avg.pct_of_peak_sustained_elapsed",
+                kernel_metrics.get("hbm_bw_pct_of_peak"),
             )
             perf_metrics["compute_throughput"] = kernel_metrics.get(
-                "sm__throughput.avg.pct_of_peak_sustained_elapsed"
+                "sm__throughput.avg.pct_of_peak_sustained_elapsed",
+                kernel_metrics.get("compute_sol_pct"),
             )
 
         if early_stop_reason:

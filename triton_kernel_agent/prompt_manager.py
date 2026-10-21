@@ -303,6 +303,7 @@ class PromptManager:
             recent_attempts=recent_attempts,
             reflexions=reflexions,
             rag_context=rag_context,
+            kernel_guidance=self.target_platform.kernel_guidance,
         )
 
     def render_reflexion_prompt(self, attempt) -> str:
@@ -342,7 +343,7 @@ class PromptManager:
 ## Results
 - Performance: {attempt.time_before_ms:.4f}ms → {attempt.time_after_ms:.4f}ms
 - Improvement: {attempt.improvement_pct:+.1f}%
-- NCU SOL: Compute {attempt.compute_sol_pct:.1f}%, Memory {attempt.memory_sol_pct:.1f}%
+- Profiler SOL: Compute {attempt.compute_sol_pct:.1f}%, Memory {attempt.memory_sol_pct:.1f}%
 - Passed: {attempt.passed_verification}
 
 Respond with JSON containing:
